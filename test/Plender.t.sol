@@ -2,8 +2,9 @@
 pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
+import "../Plender.sol";
 
-contract ContractTest is Test {
+contract PlenderTest is Test {
     function setUp() public {}
 
     function testExample() public {
