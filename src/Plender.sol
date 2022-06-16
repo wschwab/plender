@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.15;
 
+import "@rari-capital/solmate/src/tokens/ERC721.sol";
+
 // open questions:
 //   * do we need a status enum, or can the status be inferred on the fly?
 
@@ -32,7 +34,7 @@ struct Loan {
   uint256 deadline;
 }
 
-contract Plender {
+contract Plender is ERC721 {
   uint256 collateralCounter;
   uint256 tokenIdCounter;
 
