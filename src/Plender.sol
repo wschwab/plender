@@ -18,16 +18,16 @@ enum CollateralType {
   ERC1155
 }
 
-// maybe store in an array
-struct Collateral {
-  address owner;
-  address contractAddr;
-  uint256 tokenId;
-}
-
 // maybe stick them in an array where index = tokenId
 struct Loan {
-  // do we need a loan id?
+  // address of the collateral's original owner
+  address owner;
+  // address of the collateral
+  address contractAddr;
+  // tokenId of collateral, 0 if ERC20
+  uint256 tokenId;
+  // amount of collateral, 0 if ERC721
+  uint256 amount;
   // the asset being lent
   address borrowingAsset;
   // the amount being lent
@@ -36,22 +36,22 @@ struct Loan {
   uint256 amountToPayBack;
   // timestamp of deadline
   uint256 deadline;
+  // if offer has been accepted
+  bool accepted;
 }
 
 error Unauthorized();
 error TokenTypeNotSetOrUnrecognized();
 error InvalidTokenType();
+error TokenIdDoesNotExist();
 
 contract Plender is ERC721 {
-  uint256 collateralCounter;
-  uint256 tokenIdCounter;
-
   /// @notice whitlisted curators of token types
   mapping (address => bool) public curators;
   /// @notice curated list of token types of contracts
   mapping (address => CollateralType) public tokenTypes;
-  /// @notice list of all loans
-  mapping (address => mapping(uint256 => Loan)) public loans;
+  /// @notice array of all offers, also used as tokenId
+  Loan[] public offers;
 
   modifier onlyCurators() {
     if(!curators[msg.sender]) revert Unauthorized();
@@ -65,19 +65,29 @@ contract Plender is ERC721 {
   event Liquidated();
   event TokenAdded(address token, uint8 ttype);
 
+  function tokenURI(uint256 tokenId) view override returns(string memory) {
+    if(!offers[tokenId].accepted) revert TokenIdDoesNotExist();
+  }
+
   function getTokenType(address token) view returns(CollateralType memory) {
     CollateralType ttype = tokenTypes[token];
     if(ttype == CollateralType.NULL) revert TokenTypeNotSetOrUnrecognized();
     return ttype;
   }
 
-  function depositCollateral(
+  /// @notice make offer for collateral
+  /// @param collateralContract the contract of the NFT or ERC20 for collateral
+  /// @param tokenId the index of the NFT, 0 for ERC20
+  /// @param amount amount of asset offered, 0 for ERC721
+  /// @param offerAsset the address of the asset being lent
+  /// @param amountToLend amount of the asset being lent
+  /// @param amountToPayBack full amount due at term
+  /// @param deadline timestamp of deadline for loan
+  /// @return index of the offer
+  function makeOffer(
     address collateralContract,
     uint256 tokenId,
-    CollateralType collateralType
-    ) external returns(uint256) {}
-
-  function makeOffer(
+    uint256 amount,
     address offerAsset,
     uint256 amountToLend,
     uint256 amountToPayBack,
@@ -86,6 +96,7 @@ contract Plender is ERC721 {
 
   function acceptOffer(uint256 offerId) external returns(bool) {}
 
+  // for paying back the loan and getting the collateral back
   function payback(uint256 offerId) external returns(bool) {}
 
   function liquidate(uint256 offerId) external returns(bool) {}
