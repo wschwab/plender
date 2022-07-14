@@ -17,11 +17,19 @@ import "@rari-capital/solmate/src/utils/SafeTransferLib.sol";
 //     meaning not checking that proposer actually posseses the assets and/or escrowing, which
 //     makes offering cheap and accepting more expensive (comprative to offering), also UIs
 //     can check for ownership and filter
+//   * the underlying NFTs should have 4494 Permits (ofc)
 //   * in case you're reading this, this is not meant to be efficient yet, still brainstorming
 
 interface ERC1155 {
   function balanceOf(address owner, uint256 id) external view returns(uint256);
   function safeTransferFrom(address from, address to, uint256 id, uint256 amount) external;
+}
+
+enum Status {
+  NULL,
+  CREATED,
+  ACCEPTED,
+  RESOLVED
 }
 
 enum CollateralType {
@@ -64,7 +72,9 @@ error Unauthorized();
 error TokenTypeNotSetOrUnrecognized();
 error InvalidTokenType();
 error TokenIdDoesNotExist();
+error OfferDoesNotExist();
 error TransferFailed();
+error OfferAlreadyPaidBack();
 error ThisShouldNotHappen();
 
 contract Plender is ERC721 {
@@ -93,8 +103,21 @@ contract Plender is ERC721 {
   constructor() ERC721("Plender", "PLNDR") {}
 
   function tokenURI(uint256 tokenId) public view override returns(string memory) {
+    // offers are only minted as an NFT once accepted
     if(!offers[tokenId].accepted) revert TokenIdDoesNotExist();
     return "";
+  }
+
+  function getOfferStatus(offerId) public view returns(Status) {
+    if(offerId > offers.length) revert OfferDoesNotExist();
+    try this.tokenURI(offerId) returns (string memory) {
+      return Status.Accepted;
+    } catch  {
+      if(offers[offerId].accepted) return Status.RESOLVED;
+      if(offers[offerId].deadline != 0) return Status.CREATED;
+      // I don't think this should ever be triggered, but just in case
+      return Status.NULL;
+    }
   }
 
   /// @notice make offer for collateral or loan
@@ -126,6 +149,8 @@ contract Plender is ERC721 {
 
     // COLLATERAL OFFER
     if(offerType == OfferType.COLLATERAL) {
+      // ownership check?
+
       offers[offerId] = Loan({
         borrower: msg.sender,
         contractAddr: collateralContract,
@@ -138,6 +163,7 @@ contract Plender is ERC721 {
         deadline: deadline,
         accepted: false
       });
+      // short hook?
       emit CollateralOffer();
     }
     // LOAN OFFER
@@ -154,6 +180,7 @@ contract Plender is ERC721 {
         deadline: deadline,
         accepted: false
       });
+      // long hook?
       emit LoanOffer();
     }
 
@@ -197,16 +224,72 @@ contract Plender is ERC721 {
       offer.lender,
       offer.borrower
     );
-    // maybe there should be a hook for shorting NFTs here
+    // maybe there should be a hook for shorting/longing NFTs here
+    // longing - can offer alternative collateral to NFT, if defaults, gets NFT?
+    //   should be cheaper than buying the actual offer NFT? not sure
+    //   does this only work if the lender is accepting?
     _mint(offer.lender, offerId);
     emit OfferAccepeted();
     return true;
   }
 
   // for paying back the loan and getting the collateral back
-  function payback(uint256 offerId) external returns(bool) {}
+  function payback(uint256 offerId) external payable returns(bool) {
+    Loan memory offer = offers[offerId];
+    if(msg.sender != offer.borrower) revert Unauthorized();
+    transferTrusted(
+      CollateralType.ERC20,
+      offer.borrowingAsset,
+      0,
+      offer.amountToPayBack,
+      msg.sender,
+      ownerOf(offerId);
+    );
 
-  function liquidate(uint256 offerId) external returns(bool) {}
+    // is burning the offer NFT enough to show it's paid back?
+    _burn(offerId);
+
+    // return NFT collateral to original owner
+    transferTrusted(
+      tokenTypes[offer.contractAddr],
+      offer.contractAddr,
+      offer.tokenId,
+      offer.amountLent,
+      address(this),
+      msg.sender
+    );
+
+    // this probably needs some kind of event, tho maybe the burn Transfer is enough
+
+    return true;
+  }
+
+  function liquidate(uint256 offerId) external returns(bool) {
+    Loan memory offer = offers[offerId];
+    if(offer.deadline > block.timestamp) revert Unauthorized();
+    // need to check that loan was accepted so this can't be use to liquidate identical collateral
+    // ie there's an unaccepted offer with 5 of a particular 1155 id as collateral
+    // but someone else has put up that collateral in an accepted offer
+    if(!offer.accepted) revert Unauthorized();
+    // do we need to check if it's been paid back?
+    // just in case, since we know it was accepted, we just need to check for the offer NFT
+    tokenURI(offerId);
+
+    // burn offer NFT (so it can't be collected twice)
+    _burn(offerId);
+    
+    // send collateral to lender
+    transferTrusted(
+      tokenTypes[offer.contractAddr],
+      offer.contractAddr,
+      offer.tokenId,
+      offer.amountLent,
+      address(this),
+      ownerOf(offerId)
+    );
+
+    return true;
+  }
 
   function setTokenType(address token, uint8 ttype) external onlyCurators {
     if(ttype >= 4) revert InvalidTokenType();
