@@ -75,6 +75,7 @@ error TokenIdDoesNotExist();
 error OfferDoesNotExist();
 error TransferFailed();
 error OfferAlreadyPaidBack();
+error MustBeERC20();
 error ThisShouldNotHappen();
 
 contract Plender is ERC721 {
@@ -98,6 +99,7 @@ contract Plender is ERC721 {
   event OfferAccepeted();
   event PaidBack();
   event Liquidated();
+  event BorrowerChanged(uint256 indexed offerId, address indexed newBorrower);
   event TokenAdded(address token, uint8 ttype);
 
   constructor() ERC721("Plender", "PLNDR") {}
@@ -287,6 +289,45 @@ contract Plender is ERC721 {
       address(this),
       ownerOf(offerId)
     );
+
+    return true;
+  }
+
+  /// @dev can be transfered for free by putting address(0) for token
+  /// currently only allowing payment in ERC20
+  function transferBorrower(
+    uint256 offerId,
+    address newBorrower, 
+    ERC20 tokenContract, 
+    uint256 amount
+  ) external returns(bool) {
+    if(msg.sender != offers[offerId].borrower) revert Unauthorized();
+    if(tokenTypes[address(tokenContract)] != CollateralType.ERC20 || address(tokenContract) != address(0)) revert MustBeERC20();
+    if(tokenContract != address(0)) {
+      tokenContract.transferFrom(newBorrower, msg.sender, amount);
+    }
+    offers[offerId].borrower = newBorrower;
+
+    emit BorrowerChanged(offerId, newBorrower);
+
+    return true;
+  }
+
+  /// currently only allowing payment in ERC20
+  /// the only advantage over the default erc721 transfer is that selling is built in
+  function transferLender(
+    uint256 offerId,
+    address newLender,
+    ERC20 tokenContract,
+    uint256 amount
+  ) external returns(bool) {
+    if(msg.sender != ownerOf(offerId)) revert Unauthorized();
+    if(tokenTypes[address(tokenContract)] != CollateralType.ERC20) revert MustBeERC20();
+    tokenContract.transferFrom(newBorrower, msg.sender, amount);
+
+    _ownerOf[offerId] = newLender;
+
+    emit Transfer(msg.sender, newLender, offerId);
 
     return true;
   }
